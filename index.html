@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Solana Web Wallet</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+  <style>
+    :root {
+      --bg-color: #0f0f0f;
+      --text-color: white;
+      --accent-color: #ffc107;
+    }
+    .light-mode {
+      --bg-color: #f8f9fa;
+      --text-color: #212529;
+      --accent-color: #0d6efd;
+    }
+    body {
+      background-color: var(--bg-color);
+      color: var(--text-color);
+      font-family: 'Segoe UI', sans-serif;
+      padding: 2rem;
+      transition: background 0.3s, color 0.3s;
+    }
+    .wallet-box {
+      background: rgba(255, 255, 255, 0.03);
+      padding: 2rem;
+      border-radius: 15px;
+      box-shadow: 0 0 20px rgba(0, 0, 0, 0.6);
+      animation: fadeIn 1s ease-out;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .btn-custom {
+      margin: 5px;
+      transition: transform 0.2s ease;
+    }
+    .btn-custom:hover {
+      transform: scale(1.05);
+    }
+    .theme-toggle {
+      position: absolute;
+      top: 20px;
+      right: 30px;
+      font-size: 1.2rem;
+      cursor: pointer;
+    }
+    .modal-content {
+      background-color: #212121;
+      color: white;
+    }
+    .light-mode .modal-content {
+      background-color: white;
+      color: black;
+    }
+  </style>
+</head>
+<body>
+  <div class="theme-toggle" onclick="toggleTheme()">🌙</div>
+  <div class="container wallet-box">
+    <h1>🪙 Solana Web Wallet</h1>
+
+    <div class="d-flex align-items-center mb-3">
+      <label for="networkSelect" class="me-2">🌐 Network:</label>
+      <select id="networkSelect" class="form-select w-auto" onchange="switchNetwork()">
+        <option value="devnet" selected>Devnet</option>
+        <option value="mainnet-beta">Mainnet</option>
+      </select>
+    </div>
+
+    <p><strong>Mnemonic:</strong> <span id="mnemonic">**************</span></p>
+    <p><strong>Public Key:</strong> <span id="publicKey">Loading...</span></p>
+    <p><strong>Balance:</strong> <span id="balance">Loading...</span></p>
+    <p><strong>Private Key (Base58):</strong> <span id="privateKey">**************</span></p>
+
+    <button class="btn btn-warning btn-custom" onclick="reveal('mnemonic')">🔓 Reveal Mnemonic</button>
+    <button class="btn btn-warning btn-custom" onclick="reveal('privateKey')">🔓 Reveal Private Key</button>
+    <button class="btn btn-success btn-custom" onclick="airdropSol()">🎁 Airdrop 1 SOL</button>
+    <button class="btn btn-secondary btn-custom" onclick="showPasswordChangeModal()">🔐 Change Password</button>
+
+    <hr>
+    <h4>Send SOL</h4>
+    <input id="recipient" class="form-control" placeholder="Recipient Address" />
+    <input id="amount" class="form-control mt-2" type="number" placeholder="Amount in SOL" />
+    <button class="btn btn-primary mt-2" onclick="sendSol()">🚀 Send</button>
+
+    <hr>
+    <h4>🔍 Check Any Wallet Balance</h4>
+    <input id="searchKey" class="form-control" placeholder="Enter a public key" />
+    <button class="btn btn-info mt-2" onclick="checkOtherBalance()">Check Balance</button>
+    <p id="searchResult" class="mt-2"></p>
+  </div>
+
+  <!-- Modals (Password / Change Password) -->
+  <div class="modal fade" id="passwordModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content p-3">
+        <h5>🔐 Enter your password to continue:</h5>
+        <input type="password" id="passwordInput" class="form-control mt-2" placeholder="Password" />
+        <div class="d-flex justify-content-end mt-3">
+          <button class="btn btn-primary me-2" onclick="confirmReveal()">Confirm</button>
+          <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal fade" id="changePasswordModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content p-3">
+        <h5>🔐 Change Password</h5>
+        <input type="password" id="oldPassword" class="form-control mt-2" placeholder="Current Password" />
+        <input type="password" id="newPassword" class="form-control mt-2" placeholder="New Password" />
+        <input type="password" id="confirmPassword" class="form-control mt-2" placeholder="Confirm New Password" />
+        <div class="d-flex justify-content-end mt-3">
+          <button class="btn btn-primary me-2" onclick="changePassword()">Update</button>
+          <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script type="module">
+    import { Connection, PublicKey, clusterApiUrl } from "https://esm.sh/@solana/web3.js";
+    import bs58 from "https://esm.sh/bs58";
+    import nacl from "https://esm.sh/tweetnacl";
+    import bip39 from "https://esm.sh/bip39";
+
+    let mnemonic = "army wealth alert cousin puppy invite usage one congress donor mammal hotel";
+    let walletPassword = localStorage.getItem("wallet_password") || "1234";
+    let currentRevealType = null;
+
+    let network = 'devnet';
+    let connection = new Connection(clusterApiUrl(network), "confirmed");
+
+    const seed = await bip39.mnemonicToSeed(mnemonic);
+    const seedArray = seed.slice(0, 32);
+    const keypair = nacl.sign.keyPair.fromSeed(seedArray);
+    const privateKeyBs58 = bs58.encode(keypair.secretKey);
+    const pubKey = new PublicKey(keypair.publicKey);
+
+    document.getElementById("publicKey").textContent = pubKey.toBase58();
+    document.getElementById("balance").textContent = "Fetching...";
+    document.getElementById("privateKey").textContent = "**************";
+
+    async function updateBalance() {
+      const balanceLamports = await connection.getBalance(pubKey);
+      const sol = balanceLamports / 1e9;
+      document.getElementById("balance").textContent = `${sol.toFixed(4)} SOL`;
+    }
+    await updateBalance();
+
+    window.switchNetwork = function () {
+      network = document.getElementById("networkSelect").value;
+      connection = new Connection(clusterApiUrl(network), "confirmed");
+      updateBalance();
+      document.getElementById("searchResult").textContent = '';
+    }
+
+    window.reveal = function (type) {
+      currentRevealType = type;
+      const modal = new bootstrap.Modal(document.getElementById("passwordModal"));
+      modal.show();
+    }
+
+    window.confirmReveal = function () {
+      const password = document.getElementById("passwordInput").value;
+      const modal = bootstrap.Modal.getInstance(document.getElementById("passwordModal"));
+      if (password === walletPassword) {
+        if (currentRevealType === 'mnemonic') {
+          document.getElementById("mnemonic").textContent = mnemonic;
+        } else if (currentRevealType === 'privateKey') {
+          document.getElementById("privateKey").textContent = privateKeyBs58;
+        }
+        modal.hide();
+      } else {
+        alert("❌ Incorrect password");
+      }
+    }
+
+    window.airdropSol = async function () {
+      try {
+        const sig = await connection.requestAirdrop(pubKey, 1e9);
+        await connection.confirmTransaction(sig);
+        await updateBalance();
+        alert("✅ Airdrop successful!");
+      } catch (e) {
+        alert("❌ Airdrop failed: " + e.message);
+      }
+    }
+
+    window.sendSol = async function () {
+      const recipient = document.getElementById("recipient").value;
+      const amount = parseFloat(document.getElementById("amount").value);
+      if (!recipient || !amount || isNaN(amount)) return alert("⚠️ Fill recipient and valid amount");
+
+      const toPubKey = new PublicKey(recipient);
+      const tx = await connection.requestAirdrop(toPubKey, amount * 1e9); // temp stub, real send needs sign + tx
+      alert("🚀 Sent! (simulate)");
+    }
+
+    window.checkOtherBalance = async function () {
+      const key = document.getElementById("searchKey").value;
+      const result = document.getElementById("searchResult");
+      try {
+        const otherKey = new PublicKey(key);
+        const bal = await connection.getBalance(otherKey);
+        result.textContent = `💰 Balance: ${(bal / 1e9).toFixed(4)} SOL`;
+      } catch (e) {
+        result.textContent = "❌ Invalid public key";
+      }
+    }
+
+    window.showPasswordChangeModal = function () {
+      const modal = new bootstrap.Modal(document.getElementById("changePasswordModal"));
+      modal.show();
+    }
+
+    window.changePassword = function () {
+      const oldPwd = document.getElementById("oldPassword").value;
+      const newPwd = document.getElementById("newPassword").value;
+      const confirmPwd = document.getElementById("confirmPassword").value;
+
+      if (oldPwd !== walletPassword) return alert("❌ Current password is incorrect");
+      if (newPwd !== confirmPwd) return alert("❌ New passwords do not match");
+      if (newPwd.length < 4) return alert("⚠️ Password too short");
+
+      localStorage.setItem("wallet_password", newPwd);
+      walletPassword = newPwd;
+      bootstrap.Modal.getInstance(document.getElementById("changePasswordModal")).hide();
+      alert("✅ Password updated successfully!");
+    }
+
+    window.toggleTheme = function () {
+      const isLight = document.body.classList.toggle('light-mode');
+      document.querySelector('.theme-toggle').textContent = isLight ? '☀️' : '🌙';
+      localStorage.setItem('theme', isLight ? 'light' : 'dark');
+    }
+
+    window.onload = () => {
+      const savedTheme = localStorage.getItem('theme');
+      if (savedTheme === 'light') {
+        document.body.classList.add('light-mode');
+        document.querySelector('.theme-toggle').textContent = '☀️';
+      }
+    }
+  </script>
+</body>
+</html>
