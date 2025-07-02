@@ -18,4 +18,7 @@ export default defineConfig({
   optimizeDeps: {
     include: ['buffer', 'process', 'stream', 'assert', 'crypto'],
   },
+  build: {
+    target: 'es2022',  // <-- add this line to enable top-level await support
+  }
 })
